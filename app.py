@@ -6,13 +6,65 @@ import re
 import uuid
 
 # Version de l'application
-APP_VERSION = "1.7.1"
+APP_VERSION = "2.0.0"
 
 st.set_page_config(page_title="Recherche Événements - Voix du Nucléaire", page_icon="🔬", layout="wide")
+
+# Initialize session state for institutions
+if 'institutions' not in st.session_state:
+    st.session_state.institutions = []
 
 # Titre
 st.title("🔬 Recherche d'Événements - Voix du Nucléaire")
 st.markdown(f"*Trouvez automatiquement les événements universitaires (forums, JPO, journées orientation)* • **v{APP_VERSION}**")
+
+# Tabs
+tab1, tab2 = st.tabs(["🔍 Recherche", "🏫 Institutions"])
+
+# ===== TAB 2: INSTITUTIONS =====
+with tab2:
+    st.header("Gestion des institutions")
+    st.markdown("Ajoutez les sites web des institutions à surveiller (universités, écoles d'ingénieurs, etc.)")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        new_institution = st.text_input(
+            "Ajouter une institution",
+            placeholder="https://www.ec-lyon.fr/",
+            help="Entrez l'URL complète du site (ex: https://www.ec-lyon.fr/)"
+        )
+    
+    with col2:
+        st.write("")  # Spacing
+        st.write("")  # Spacing
+        if st.button("➕ Ajouter", use_container_width=True):
+            if new_institution and new_institution.startswith('http'):
+                if new_institution not in st.session_state.institutions:
+                    st.session_state.institutions.append(new_institution)
+                    st.success(f"✅ Ajouté: {new_institution}")
+                else:
+                    st.warning("⚠️ Cette institution existe déjà")
+            else:
+                st.error("❌ Veuillez entrer une URL valide (commençant par http)")
+    
+    # Display institutions list
+    if st.session_state.institutions:
+        st.markdown(f"### 📋 Institutions enregistrées ({len(st.session_state.institutions)})")
+        
+        for i, inst in enumerate(st.session_state.institutions):
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                st.text(inst)
+            with col2:
+                if st.button("🗑️", key=f"del_{i}"):
+                    st.session_state.institutions.pop(i)
+                    st.rerun()
+    else:
+        st.info("ℹ️ Aucune institution enregistrée. Ajoutez-en pour rechercher spécifiquement sur leurs sites.")
+
+# ===== TAB 1: RECHERCHE =====
+with tab1:
 
 # Sidebar pour la clé API
 with st.sidebar:
@@ -30,8 +82,21 @@ with st.sidebar:
     st.markdown("2. Créez un compte")
     st.markdown("3. Copiez votre clé API")
 
-# Formulaire de recherche
-col1, col2 = st.columns([2, 1])
+    # ===== TAB 1: RECHERCHE =====
+with tab1:
+    # Search mode selection
+    if st.session_state.institutions:
+        search_scope = st.radio(
+            "Où chercher ?",
+            ["🏫 Uniquement dans mes institutions", "🌐 Sur le web (+ priorité aux institutions)"],
+            horizontal=True
+        )
+    else:
+        search_scope = "🌐 Sur le web (+ priorité aux institutions)"
+        st.info("💡 Ajoutez des institutions dans l'onglet 'Institutions' pour rechercher spécifiquement sur leurs sites.")
+    
+    # Formulaire de recherche
+    col1, col2 = st.columns([2, 1])
 
 with col1:
     search_mode = st.radio(
@@ -194,7 +259,7 @@ def extract_date_from_url(url):
         pass
     return None
 
-def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=False, debug=False):
+def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=False, institutions=None, search_scope="web", debug=False):
     """Recherche les événements via Serper API avec requêtes multiples"""
     if not api_key:
         st.error("⚠️ Veuillez entrer votre clé API Serper dans la barre latérale")
@@ -203,32 +268,50 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
     region_part = region if region != "Toute la France" else ""
     year = datetime.now().year
     
-    # Définir les variations de requête selon le nombre demandé
+    # Définir les variations de requête selon le nombre demandé et le scope
     variations = []
-    if num_results <= 10:
-        # Une seule recherche
-        if region_part:
-            variations = [f'{query} {region_part} {year}']
-        else:
-            variations = [f'{query} France {year}']
-    elif num_results <= 30:
-        # 3 recherches pour ~30 résultats
-        base = f'{query} {region_part if region_part else "France"} {year}'
-        variations = [
-            base,
-            f'{query} université {region_part if region_part else "France"} {year}',
-            f'{query} "école ingénieurs" {region_part if region_part else "France"} {year}'
-        ]
+    
+    # Si recherche ciblée sur institutions
+    if search_scope == "institutions" and institutions:
+        if debug:
+            st.info(f"🏫 Recherche ciblée sur {len(institutions)} institution(s)")
+        
+        # Créer une requête par institution (limité aux 5 premières pour ne pas dépasser les quotas)
+        for inst in institutions[:5]:
+            # Extraire le domaine de l'URL
+            domain = inst.replace('https://', '').replace('http://', '').split('/')[0]
+            base_query = f'{query} site:{domain} {year}'
+            variations.append(base_query)
+    
+    # Recherche web standard (avec priorité institutions si disponibles)
     else:
-        # 5 recherches pour ~50 résultats
-        base = f'{query} {region_part if region_part else "France"} {year}'
-        variations = [
-            base,
-            f'{query} université {region_part if region_part else "France"} {year}',
-            f'{query} "école ingénieurs" {region_part if region_part else "France"} {year}',
-            f'{query} IUT {region_part if region_part else "France"} {year}',
-            f'{query} étudiant {region_part if region_part else "France"} {year}'
-        ]
+        if num_results <= 10:
+            # Une seule recherche
+            base = f'{query} {region_part if region_part else "France"} {year}'
+            
+            # Ajouter les institutions en priorité
+            if institutions and len(institutions) > 0:
+                domains = ' OR '.join([f'site:{inst.replace("https://", "").replace("http://", "").split("/")[0]}' for inst in institutions[:3]])
+                variations = [f'{query} ({domains}) {year}', base]
+            else:
+                variations = [base]
+        
+        elif num_results <= 30:
+            base = f'{query} {region_part if region_part else "France"} {year}'
+            variations = [
+                base,
+                f'{query} université {region_part if region_part else "France"} {year}',
+                f'{query} "école ingénieurs" {region_part if region_part else "France"} {year}'
+            ]
+        else:
+            base = f'{query} {region_part if region_part else "France"} {year}'
+            variations = [
+                base,
+                f'{query} université {region_part if region_part else "France"} {year}',
+                f'{query} "école ingénieurs" {region_part if region_part else "France"} {year}',
+                f'{query} IUT {region_part if region_part else "France"} {year}',
+                f'{query} étudiant {region_part if region_part else "France"} {year}'
+            ]
     
     if debug:
         st.info(f"🔍 {len(variations)} requête(s) pour obtenir ~{num_results} résultats")
@@ -342,95 +425,107 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
         st.error(f"❌ Erreur: {str(e)}")
         return None, None
 
-# Recherche
-if search_button:
-    # Générer un ID unique pour cette recherche
-    search_id = str(uuid.uuid4())[:8]
-    st.info(f"🔢 **ID de recherche : `{search_id}`**")
-    
-    if not search_query:
-        st.warning("⚠️ Veuillez entrer un type d'événement")
-    else:
-        with st.spinner("🔍 Recherche en cours..."):
-            results, raw_results = search_events(search_query, region, api_key, num_results, fetch_dates, debug_mode)
+    # Recherche
+    if search_button:
+        # Générer un ID unique pour cette recherche
+        search_id = str(uuid.uuid4())[:8]
+        st.info(f"🔢 **ID de recherche : `{search_id}`**")
         
-        if results is None:
-            pass  # L'erreur a déjà été affichée
-        elif len(results) == 0:
-            if debug_mode and raw_results:
-                st.warning(f"⚠️ {len(raw_results)} résultat(s) trouvé(s) mais tous filtrés (tourisme, hôtellerie, etc.)")
-                st.markdown("### 🔍 Résultats bruts (avant filtrage)")
-                df_raw = pd.DataFrame(raw_results)
-                st.dataframe(
-                    df_raw,
-                    column_config={
-                        "Lien": st.column_config.LinkColumn("Lien", display_text="Voir")
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
-            else:
-                st.info("ℹ️ Aucun résultat trouvé. Essayez avec d'autres termes ou une autre région.")
+        if not search_query:
+            st.warning("⚠️ Veuillez entrer un type d'événement")
         else:
-            if debug_mode and raw_results:
-                filtered_count = len(raw_results) - len(results)
-                st.success(f"✅ {len(results)} événement(s) pertinent(s) ({filtered_count} filtré(s))")
+            # Déterminer le scope de recherche
+            scope = "institutions" if "institutions" in search_scope else "web"
+            
+            with st.spinner("🔍 Recherche en cours..."):
+                results, raw_results = search_events(
+                    search_query, 
+                    region, 
+                    api_key, 
+                    num_results, 
+                    fetch_dates, 
+                    st.session_state.institutions,
+                    scope,
+                    debug_mode
+                )
+            
+            if results is None:
+                pass  # L'erreur a déjà été affichée
+            elif len(results) == 0:
+                if debug_mode and raw_results:
+                    st.warning(f"⚠️ {len(raw_results)} résultat(s) trouvé(s) mais tous filtrés (tourisme, hôtellerie, etc.)")
+                    st.markdown("### 🔍 Résultats bruts (avant filtrage)")
+                    df_raw = pd.DataFrame(raw_results)
+                    st.dataframe(
+                        df_raw,
+                        column_config={
+                            "Lien": st.column_config.LinkColumn("Lien", display_text="Voir")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("ℹ️ Aucun résultat trouvé. Essayez avec d'autres termes ou une autre région.")
             else:
-                st.success(f"✅ {len(results)} événement(s) trouvé(s)")
-            
-            # Créer un DataFrame
-            df = pd.DataFrame(results)
-            
-            # Boutons d'export
-            col1, col2 = st.columns(2)
-            with col1:
-                csv = df.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="📥 Télécharger CSV",
-                    data=csv,
-                    file_name=f"evenements-vdn-{datetime.now().strftime('%Y-%m-%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            with col2:
-                # Copie pour Excel (format TSV)
-                tsv = df.to_csv(index=False, sep='\t')
-                st.download_button(
-                    label="📋 Télécharger pour Excel",
-                    data=tsv,
-                    file_name=f"evenements-vdn-{datetime.now().strftime('%Y-%m-%d')}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            
-            # Affichage du tableau
-            st.markdown("### Résultats filtrés")
-            
-            # Configuration des colonnes pour l'affichage
-            st.dataframe(
-                df,
-                column_config={
-                    "Lien": st.column_config.LinkColumn("Lien", display_text="Voir")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Afficher les résultats bruts en mode debug
-            if debug_mode and raw_results and len(raw_results) > len(results):
-                st.markdown("### 🔍 Tous les résultats (avant filtrage)")
-                df_raw = pd.DataFrame(raw_results)
+                if debug_mode and raw_results:
+                    filtered_count = len(raw_results) - len(results)
+                    st.success(f"✅ {len(results)} événement(s) pertinent(s) ({filtered_count} filtré(s))")
+                else:
+                    st.success(f"✅ {len(results)} événement(s) trouvé(s)")
+                
+                # Créer un DataFrame
+                df = pd.DataFrame(results)
+                
+                # Boutons d'export
+                col1, col2 = st.columns(2)
+                with col1:
+                    csv = df.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="📥 Télécharger CSV",
+                        data=csv,
+                        file_name=f"evenements-vdn-{datetime.now().strftime('%Y-%m-%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col2:
+                    # Copie pour Excel (format TSV)
+                    tsv = df.to_csv(index=False, sep='\t')
+                    st.download_button(
+                        label="📋 Télécharger pour Excel",
+                        data=tsv,
+                        file_name=f"evenements-vdn-{datetime.now().strftime('%Y-%m-%d')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                
+                # Affichage du tableau
+                st.markdown("### Résultats filtrés")
+                
+                # Configuration des colonnes pour l'affichage
                 st.dataframe(
-                    df_raw,
+                    df,
                     column_config={
                         "Lien": st.column_config.LinkColumn("Lien", display_text="Voir")
                     },
                     hide_index=True,
                     use_container_width=True
                 )
-            
-            st.info("💡 **Astuce:** Vérifiez chaque lien pour confirmer que l'événement est gratuit pour les intervenants")
+                
+                # Afficher les résultats bruts en mode debug
+                if debug_mode and raw_results and len(raw_results) > len(results):
+                    st.markdown("### 🔍 Tous les résultats (avant filtrage)")
+                    df_raw = pd.DataFrame(raw_results)
+                    st.dataframe(
+                        df_raw,
+                        column_config={
+                            "Lien": st.column_config.LinkColumn("Lien", display_text="Voir")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                
+                st.info("💡 **Astuce:** Vérifiez chaque lien pour confirmer que l'événement est gratuit pour les intervenants")
 
 # Footer
 st.markdown("---")
