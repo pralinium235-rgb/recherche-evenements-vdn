@@ -6,7 +6,7 @@ import re
 import uuid
 
 # Version de l'application
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.2.0"
 
 st.set_page_config(page_title="Recherche Événements - Voix du Nucléaire", page_icon="🔬", layout="wide")
 
@@ -206,8 +206,8 @@ def parse_date(date_str):
     except:
         return None
 
-def is_future_event(date_str):
-    """Vérifie si un événement est futur"""
+def is_future_event(date_str, min_date=None):
+    """Vérifie si un événement est futur par rapport à une date minimum"""
     if date_str == 'Date à confirmer':
         return True  # Garder les événements sans date confirmée
     
@@ -215,9 +215,13 @@ def is_future_event(date_str):
     if not parsed_date:
         return True  # En cas de doute, garder
     
-    # Comparer avec aujourd'hui
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return parsed_date >= today
+    # Utiliser la date minimum fournie, ou aujourd'hui par défaut
+    if min_date is None:
+        min_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        min_date = min_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    return parsed_date >= min_date
 
 def extract_date_from_url(url):
     """Tente d'extraire une date en allant chercher sur la page web"""
@@ -232,7 +236,7 @@ def extract_date_from_url(url):
         pass
     return None
 
-def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=False, institutions=None, search_scope="web", debug=False):
+def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=False, institutions=None, search_scope="web", min_date=None, debug=False):
     """Recherche les événements via Serper API avec requêtes multiples"""
     if not api_key:
         st.error("⚠️ Veuillez entrer votre clé API Serper dans la barre latérale")
@@ -377,8 +381,8 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
             
             date_final = date or 'Date à confirmer'
             
-            # Filtrer les événements passés
-            if not is_future_event(date_final):
+            # Filtrer les événements passés (par rapport à min_date)
+            if not is_future_event(date_final, min_date):
                 past_events_count += 1
                 continue
             
@@ -518,6 +522,12 @@ with tab1:
         region = st.selectbox("Région", regions)
         
         num_results = st.selectbox("Nombre de résultats", [10, 20, 50], index=1)
+        
+        min_date = st.date_input(
+            "À partir du",
+            value=datetime.now().date(),
+            help="Ne montrer que les événements à partir de cette date"
+        )
 
     search_button = st.button("🔍 Rechercher", type="primary", use_container_width=True)
 
@@ -541,6 +551,9 @@ with tab1:
             # Combiner institutions Google Sheets + temporaires
             all_institutions = st.session_state.institutions + st.session_state.temp_institutions
             
+            # Convertir la date en datetime
+            min_datetime = datetime.combine(min_date, datetime.min.time())
+            
             with st.spinner("🔍 Recherche en cours..."):
                 results, raw_results = search_events(
                     search_query, 
@@ -550,6 +563,7 @@ with tab1:
                     fetch_dates, 
                     all_institutions,
                     scope,
+                    min_datetime,
                     debug_mode
                 )
             
@@ -737,6 +751,11 @@ with tab3:
     - **10** : Rapide, pour un coup d'œil
     - **20** : Équilibré (recommandé)
     - **50** : Recherche exhaustive (plus lent)
+    
+    **À partir du :**
+    - Sélectionnez une date pour ne voir que les événements à partir de cette date
+    - Par défaut : aujourd'hui (ne montre que les événements futurs)
+    - Utile pour planifier à l'avance (ex: "événements à partir de mars 2026")
     
     **Options avancées (barre latérale) :**
     - **Chercher les dates sur les pages web** : Plus précis mais plus lent (1-2 sec par résultat)
