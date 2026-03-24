@@ -6,7 +6,7 @@ import re
 import uuid
 
 # Version de l'application
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.3"
 
 st.set_page_config(page_title="Recherche Événements - Voix du Nucléaire", page_icon="🔬", layout="wide")
 
@@ -795,17 +795,18 @@ with tab3:
     ---
     
     ## 📊 Statistiques de cette session
+    """)
     
-    - **Version de l'outil :** {APP_VERSION}
-    - **Institutions chargées :** {len(st.session_state.institutions)} (Google Sheets) + {len(st.session_state.temp_institutions)} (temporaires)
-    - **Clé API configurée :** {"✅ Oui" if api_key else "❌ Non"}
-    - **Google Sheet configurée :** {"✅ Oui" if st.session_state.sheet_url else "❌ Non"}
-    """.format(
-        APP_VERSION=APP_VERSION,
-        len=len,
-        st=st,
-        api_key=api_key
-    ))
+    # Calculer les valeurs d'abord
+    num_institutions = len(st.session_state.institutions)
+    num_temp = len(st.session_state.temp_institutions)
+    api_configured = "✅ Oui" if api_key else "❌ Non"
+    sheet_configured = "✅ Oui" if st.session_state.sheet_url else "❌ Non"
+    
+    st.markdown(f"- **Version de l'outil :** {APP_VERSION}")
+    st.markdown(f"- **Institutions chargées :** {num_institutions} (Google Sheets) + {num_temp} (temporaires)")
+    st.markdown(f"- **Clé API configurée :** {api_configured}")
+    st.markdown(f"- **Google Sheet configurée :** {sheet_configured}")
 
 # Footer
 st.markdown("---")
