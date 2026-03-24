@@ -6,65 +6,53 @@ import re
 import uuid
 
 # Version de l'application
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.1"
 
 st.set_page_config(page_title="Recherche Événements - Voix du Nucléaire", page_icon="🔬", layout="wide")
+
+def load_from_google_sheet(sheet_url):
+    """Charge les institutions depuis une Google Sheet publique"""
+    try:
+        # Extraire l'ID de la sheet depuis l'URL
+        if '/d/' in sheet_url:
+            sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+        else:
+            return None, "❌ URL invalide. Utilisez le lien complet de votre Google Sheet."
+        
+        # Construire l'URL CSV
+        csv_url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv'
+        
+        # Charger les données
+        df = pd.read_csv(csv_url, header=None)
+        
+        # Extraire les URLs (première colonne)
+        institutions = []
+        for url in df[0].dropna():
+            url_str = str(url).strip()
+            if url_str.startswith('http'):
+                institutions.append(url_str)
+        
+        return institutions, None
+    except Exception as e:
+        return None, f"❌ Erreur lors du chargement: {str(e)}"
 
 # Initialize session state for institutions
 if 'institutions' not in st.session_state:
     st.session_state.institutions = []
+if 'sheet_url' not in st.session_state:
+    st.session_state.sheet_url = ''
+if 'temp_institutions' not in st.session_state:
+    st.session_state.temp_institutions = []
+
+# Charger automatiquement depuis Google Sheets au démarrage
+if st.session_state.sheet_url and not st.session_state.institutions:
+    institutions, error = load_from_google_sheet(st.session_state.sheet_url)
+    if not error and institutions:
+        st.session_state.institutions = institutions
 
 # Titre
 st.title("🔬 Recherche d'Événements - Voix du Nucléaire")
 st.markdown(f"*Trouvez automatiquement les événements universitaires (forums, JPO, journées orientation)* • **v{APP_VERSION}**")
-
-# Tabs
-tab1, tab2 = st.tabs(["🔍 Recherche", "🏫 Institutions"])
-
-# ===== TAB 2: INSTITUTIONS =====
-with tab2:
-    st.header("Gestion des institutions")
-    st.markdown("Ajoutez les sites web des institutions à surveiller (universités, écoles d'ingénieurs, etc.)")
-    
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        new_institution = st.text_input(
-            "Ajouter une institution",
-            placeholder="https://www.ec-lyon.fr/",
-            help="Entrez l'URL complète du site (ex: https://www.ec-lyon.fr/)"
-        )
-    
-    with col2:
-        st.write("")  # Spacing
-        st.write("")  # Spacing
-        if st.button("➕ Ajouter", use_container_width=True):
-            if new_institution and new_institution.startswith('http'):
-                if new_institution not in st.session_state.institutions:
-                    st.session_state.institutions.append(new_institution)
-                    st.success(f"✅ Ajouté: {new_institution}")
-                else:
-                    st.warning("⚠️ Cette institution existe déjà")
-            else:
-                st.error("❌ Veuillez entrer une URL valide (commençant par http)")
-    
-    # Display institutions list
-    if st.session_state.institutions:
-        st.markdown(f"### 📋 Institutions enregistrées ({len(st.session_state.institutions)})")
-        
-        for i, inst in enumerate(st.session_state.institutions):
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.text(inst)
-            with col2:
-                if st.button("🗑️", key=f"del_{i}"):
-                    st.session_state.institutions.pop(i)
-                    st.rerun()
-    else:
-        st.info("ℹ️ Aucune institution enregistrée. Ajoutez-en pour rechercher spécifiquement sur leurs sites.")
-
-# ===== TAB 1: RECHERCHE =====
-with tab1:
 
 # Sidebar pour la clé API
 with st.sidebar:
@@ -73,74 +61,59 @@ with st.sidebar:
     
     api_key = st.text_input("Clé API Serper", type="password", help="Entrez votre clé API Serper.dev")
     
+    st.markdown("---")
+    st.subheader("📊 Google Sheet")
+    
+    sheet_url_input = st.text_input(
+        "Lien de votre Google Sheet",
+        value=st.session_state.sheet_url,
+        placeholder="https://docs.google.com/spreadsheets/d/...",
+        help="Collez le lien de votre Google Sheet (en lecture seule publique)"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Sauvegarder", use_container_width=True):
+            st.session_state.sheet_url = sheet_url_input
+            if sheet_url_input:
+                institutions, error = load_from_google_sheet(sheet_url_input)
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state.institutions = institutions
+                    st.success(f"✅ {len(institutions)} institution(s) chargée(s)")
+                    st.rerun()
+    
+    with col2:
+        if st.button("🔄 Recharger", use_container_width=True, disabled=not st.session_state.sheet_url):
+            institutions, error = load_from_google_sheet(st.session_state.sheet_url)
+            if error:
+                st.error(error)
+            else:
+                st.session_state.institutions = institutions
+                st.session_state.temp_institutions = []
+                st.success(f"✅ {len(institutions)} institution(s) rechargée(s)")
+                st.rerun()
+    
+    if st.session_state.institutions:
+        st.caption(f"✅ {len(st.session_state.institutions)} institution(s) chargée(s) depuis Sheets")
+    
+    st.markdown("---")
+    
     fetch_dates = st.checkbox("Chercher les dates sur les pages web", value=False, help="Plus précis mais plus lent (1-2 sec par résultat)")
     debug_mode = st.checkbox("Mode debug", help="Affiche les résultats bruts avant filtrage")
+    
+    st.markdown("---")
+    st.markdown("**Comment configurer Google Sheets?**")
+    st.markdown("1. Créez une Sheet avec vos institutions (URL en colonne A)")
+    st.markdown("2. Partager → Tous les utilisateurs → Lecteur")
+    st.markdown("3. Copiez le lien ci-dessus")
     
     st.markdown("---")
     st.markdown("**Comment obtenir une clé API?**")
     st.markdown("1. Allez sur [serper.dev](https://serper.dev)")
     st.markdown("2. Créez un compte")
     st.markdown("3. Copiez votre clé API")
-
-    # ===== TAB 1: RECHERCHE =====
-with tab1:
-    # Search mode selection
-    if st.session_state.institutions:
-        search_scope = st.radio(
-            "Où chercher ?",
-            ["🏫 Uniquement dans mes institutions", "🌐 Sur le web (+ priorité aux institutions)"],
-            horizontal=True
-        )
-    else:
-        search_scope = "🌐 Sur le web (+ priorité aux institutions)"
-        st.info("💡 Ajoutez des institutions dans l'onglet 'Institutions' pour rechercher spécifiquement sur leurs sites.")
-    
-    # Formulaire de recherche
-    col1, col2 = st.columns([2, 1])
-
-with col1:
-    search_mode = st.radio(
-        "Mode de recherche",
-        ["Recherche rapide", "Recherche personnalisée"],
-        horizontal=True
-    )
-    
-    if search_mode == "Recherche rapide":
-        event_type = st.selectbox(
-            "Type d'événement",
-            ["forum des métiers", "journée orientation", "portes ouvertes", "journée découverte"]
-        )
-        search_query = event_type
-    else:
-        search_query = st.text_input(
-            "Tapez votre recherche personnalisée",
-            placeholder='Ex: "forum emploi ingénieur" ou "salon innovation technologique"'
-        )
-
-with col2:
-    regions = [
-        "Toute la France",
-        "Auvergne-Rhône-Alpes",
-        "Bourgogne-Franche-Comté",
-        "Bretagne",
-        "Centre-Val de Loire",
-        "Corse",
-        "Grand Est",
-        "Hauts-de-France",
-        "Île-de-France",
-        "Normandie",
-        "Nouvelle-Aquitaine",
-        "Occitanie",
-        "Pays de la Loire",
-        "Provence-Alpes-Côte d'Azur"
-    ]
-    region = st.selectbox("Région", regions)
-    
-    num_results = st.selectbox("Nombre de résultats", [10, 20, 50], index=1)
-
-search_button = st.button("🔍 Rechercher", type="primary", use_container_width=True)
-
-st.info("ℹ️ **Note:** Les résultats sont automatiquement filtrés pour exclure le tourisme, l'hôtellerie, la restauration et autres domaines non pertinents.")
 
 def extract_date(text):
     """Extrait une date du texte - version améliorée"""
@@ -425,6 +398,134 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
         st.error(f"❌ Erreur: {str(e)}")
         return None, None
 
+# Tabs
+tab1, tab2, tab3 = st.tabs(["🔍 Recherche", "🏫 Institutions", "ℹ️ À propos"])
+
+# ===== TAB 2: INSTITUTIONS =====
+with tab2:
+    st.header("Gestion des institutions")
+    
+    if st.session_state.sheet_url:
+        st.success(f"📊 Liste chargée depuis Google Sheets : {len(st.session_state.institutions)} institution(s)")
+        st.info("💡 Pour modifier la liste de façon permanente, éditez directement votre Google Sheet et cliquez sur 🔄 Recharger dans la barre latérale.")
+    else:
+        st.warning("⚠️ Aucune Google Sheet configurée. Configurez-la dans la barre latérale pour sauvegarder vos institutions.")
+    
+    # Display institutions from Google Sheets
+    if st.session_state.institutions:
+        st.markdown(f"### 📋 Institutions (depuis Google Sheets)")
+        for i, inst in enumerate(st.session_state.institutions):
+            st.text(f"• {inst}")
+    
+    st.markdown("---")
+    
+    # Temporary institutions (session only)
+    st.markdown("### ➕ Ajouts temporaires (cette session uniquement)")
+    st.caption("Ces ajouts ne seront PAS sauvegardés dans Google Sheets. Pour un ajout permanent, modifiez votre Sheet.")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        new_institution = st.text_input(
+            "Ajouter temporairement",
+            placeholder="https://www.ec-lyon.fr/",
+            help="Cette institution sera disponible uniquement pour cette session"
+        )
+    
+    with col2:
+        st.write("")
+        st.write("")
+        if st.button("➕ Ajouter", use_container_width=True):
+            if new_institution and new_institution.startswith('http'):
+                all_institutions = st.session_state.institutions + st.session_state.temp_institutions
+                if new_institution not in all_institutions:
+                    st.session_state.temp_institutions.append(new_institution)
+                    st.success(f"✅ Ajouté temporairement: {new_institution}")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Cette institution existe déjà")
+            else:
+                st.error("❌ Veuillez entrer une URL valide (commençant par http)")
+    
+    # Display temporary institutions
+    if st.session_state.temp_institutions:
+        st.markdown(f"### 🕐 Institutions temporaires ({len(st.session_state.temp_institutions)})")
+        st.caption("Ces institutions disparaîtront quand vous fermerez l'app")
+        for i, inst in enumerate(st.session_state.temp_institutions):
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                st.text(inst)
+            with col2:
+                if st.button("🗑️", key=f"del_temp_{i}"):
+                    st.session_state.temp_institutions.pop(i)
+                    st.rerun()
+
+# ===== TAB 1: RECHERCHE =====
+with tab1:
+    # Combiner les institutions Google Sheets + temporaires
+    all_institutions = st.session_state.institutions + st.session_state.temp_institutions
+    
+    # Search mode selection
+    if all_institutions:
+        search_scope = st.radio(
+            "Où chercher ?",
+            ["🏫 Uniquement dans mes institutions", "🌐 Sur le web (+ priorité aux institutions)"],
+            horizontal=True
+        )
+    else:
+        search_scope = "🌐 Sur le web (+ priorité aux institutions)"
+        st.info("💡 Ajoutez des institutions dans l'onglet 'Institutions' pour rechercher spécifiquement sur leurs sites.")
+    
+    # Formulaire de recherche
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        search_mode = st.radio(
+            "Mode de recherche",
+            ["Recherche rapide", "Recherche personnalisée"],
+            horizontal=True
+        )
+        
+        if search_mode == "Recherche rapide":
+            event_type = st.selectbox(
+                "Type d'événement",
+                ["forum des métiers", "journée orientation", "portes ouvertes", "journée découverte"]
+            )
+            search_query = event_type
+        else:
+            search_query = st.text_input(
+                "Tapez votre recherche personnalisée",
+                placeholder='Ex: "forum emploi ingénieur" ou "salon innovation technologique"'
+            )
+
+    with col2:
+        regions = [
+            "Toute la France",
+            "Auvergne-Rhône-Alpes",
+            "Bourgogne-Franche-Comté",
+            "Bretagne",
+            "Centre-Val de Loire",
+            "Corse",
+            "Grand Est",
+            "Hauts-de-France",
+            "Île-de-France",
+            "Normandie",
+            "Nouvelle-Aquitaine",
+            "Occitanie",
+            "Pays de la Loire",
+            "Provence-Alpes-Côte d'Azur"
+        ]
+        region = st.selectbox("Région", regions)
+        
+        num_results = st.selectbox("Nombre de résultats", [10, 20, 50], index=1)
+
+    search_button = st.button("🔍 Rechercher", type="primary", use_container_width=True)
+
+    if fetch_dates:
+        st.warning("⏱️ **Recherche de dates sur les pages web activée** : La recherche sera plus lente mais plus précise.")
+    else:
+        st.info("ℹ️ **Note**: Les événements passés et les domaines non pertinents (tourisme, hôtellerie, etc.) sont automatiquement filtrés.")
+
     # Recherche
     if search_button:
         # Générer un ID unique pour cette recherche
@@ -437,6 +538,9 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
             # Déterminer le scope de recherche
             scope = "institutions" if "institutions" in search_scope else "web"
             
+            # Combiner institutions Google Sheets + temporaires
+            all_institutions = st.session_state.institutions + st.session_state.temp_institutions
+            
             with st.spinner("🔍 Recherche en cours..."):
                 results, raw_results = search_events(
                     search_query, 
@@ -444,7 +548,7 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
                     api_key, 
                     num_results, 
                     fetch_dates, 
-                    st.session_state.institutions,
+                    all_institutions,
                     scope,
                     debug_mode
                 )
@@ -526,6 +630,182 @@ def search_events(query, region, api_key, num_results=20, fetch_dates_from_web=F
                     )
                 
                 st.info("💡 **Astuce:** Vérifiez chaque lien pour confirmer que l'événement est gratuit pour les intervenants")
+
+# ===== TAB 3: À PROPOS =====
+with tab3:
+    st.header("ℹ️ À propos de cet outil")
+    
+    st.markdown("""
+    ## 🎯 Qu'est-ce que cet outil ?
+    
+    Cet outil aide **Voix du Nucléaire** à trouver automatiquement des événements universitaires 
+    (forums des métiers, portes ouvertes, journées orientation) où présenter l'association et 
+    discuter de l'énergie nucléaire.
+    
+    Au lieu de chercher manuellement sur Google, l'outil fait le travail pour vous et affiche 
+    les résultats dans un tableau facile à exporter.
+    
+    ---
+    
+    ## 🔑 Pourquoi une clé API Serper ?
+    
+    **Serper** est un service qui permet de faire des recherches Google de manière automatisée.
+    
+    **Pourquoi c'est nécessaire :**
+    - Google ne permet pas de faire des recherches automatiques gratuitement
+    - Serper sert d'intermédiaire pour accéder aux résultats Google
+    - Chaque utilisateur doit avoir sa propre clé (gratuite)
+    
+    **Ce que ça coûte :**
+    - ✅ **100 recherches gratuites par jour** (largement suffisant !)
+    - Après 100 recherches : environ 5€ pour 1000 recherches supplémentaires
+    - Pour un usage normal : vous resterez dans le quota gratuit
+    
+    **Comment obtenir votre clé :**
+    1. Allez sur [serper.dev](https://serper.dev)
+    2. Créez un compte (avec Google ou email)
+    3. Copiez votre clé API (affichée sur le dashboard)
+    4. Collez-la dans la barre latérale de cet outil
+    
+    **Sécurité :**
+    - Votre clé n'est jamais sauvegardée sur nos serveurs
+    - Elle reste dans votre navigateur uniquement
+    - Ne partagez jamais votre clé avec d'autres personnes
+    
+    ---
+    
+    ## 📊 Pourquoi Google Sheets ?
+    
+    **Google Sheets** permet à chaque utilisateur d'avoir sa propre liste d'institutions à surveiller.
+    
+    **Avantages :**
+    - ✅ Facile à modifier (interface familière)
+    - ✅ Accessible de partout (ordinateur, téléphone)
+    - ✅ Partage possible avec des collègues
+    - ✅ Historique des modifications
+    
+    **Comment configurer :**
+    1. Créez une nouvelle Google Sheet
+    2. Mettez vos URLs d'institutions en colonne A (une par ligne)
+       ```
+       https://www.ec-lyon.fr/
+       https://www.insa-lyon.fr/
+       https://www.cpe.fr/
+       ```
+    3. Partager → "Tous les utilisateurs disposant du lien" → **Lecteur**
+    4. Copiez le lien de la Sheet
+    5. Collez-le dans la barre latérale de l'outil
+    6. Cliquez "💾 Sauvegarder"
+    
+    **Pour modifier votre liste :**
+    - Éditez directement votre Google Sheet
+    - Revenez dans l'outil et cliquez "🔄 Recharger"
+    
+    ---
+    
+    ## 🚀 Comment utiliser l'outil ?
+    
+    ### Workflow typique :
+    
+    1. **Configuration initiale** (une seule fois)
+       - Obtenez votre clé Serper
+       - Créez votre Google Sheet avec vos institutions
+       - Configurez les deux dans la barre latérale
+    
+    2. **Recherche d'événements**
+       - Allez dans l'onglet "🔍 Recherche"
+       - Choisissez le type d'événement (forum, portes ouvertes, etc.)
+       - Choisissez la région (ou "Toute la France")
+       - Décidez si vous cherchez uniquement dans vos institutions ou sur tout le web
+       - Cliquez "🔍 Rechercher"
+    
+    3. **Exploitation des résultats**
+       - Consultez le tableau
+       - Cliquez sur les liens pour vérifier les événements
+       - Téléchargez en CSV ou pour Excel
+       - Partagez avec votre équipe
+    
+    ---
+    
+    ## 🎛️ Options de recherche
+    
+    **Deux modes de recherche :**
+    - **🏫 Uniquement dans mes institutions** : Cherche SEULEMENT sur les sites de votre liste
+    - **🌐 Sur le web (+ priorité aux institutions)** : Cherche partout, mais privilégie vos institutions
+    
+    **Nombre de résultats :**
+    - **10** : Rapide, pour un coup d'œil
+    - **20** : Équilibré (recommandé)
+    - **50** : Recherche exhaustive (plus lent)
+    
+    **Options avancées (barre latérale) :**
+    - **Chercher les dates sur les pages web** : Plus précis mais plus lent (1-2 sec par résultat)
+    - **Mode debug** : Affiche des informations techniques sur la recherche
+    
+    ---
+    
+    ## 📋 Filtres automatiques
+    
+    L'outil filtre automatiquement :
+    - ❌ **Événements passés** (garde uniquement les événements futurs)
+    - ❌ **Tourisme, hôtellerie, restauration** (non pertinents pour VDN)
+    - ❌ **Événements sans rapport** avec les écoles/universités
+    
+    ---
+    
+    ## ❓ Questions fréquentes
+    
+    **Q : Pourquoi certaines dates sont "Date à confirmer" ?**  
+    R : La date n'apparaît pas dans le titre ou la description Google. Cliquez sur le lien pour la trouver sur le site.
+    
+    **Q : Puis-je partager ma clé Serper avec des collègues ?**  
+    R : Non, chaque personne doit avoir sa propre clé. C'est gratuit et rapide à créer.
+    
+    **Q : Puis-je partager ma Google Sheet avec des collègues ?**  
+    R : Oui ! Vous pouvez collaborer sur la même Sheet. Chacun devra juste mettre le même lien dans son outil.
+    
+    **Q : L'outil sauvegarde-t-il mes recherches ?**  
+    R : Non, les recherches ne sont pas sauvegardées. Téléchargez les résultats en CSV si vous voulez les garder.
+    
+    **Q : Combien de recherches puis-je faire ?**  
+    R : 100 recherches gratuites par jour avec Serper. Une "recherche" peut générer 10-50 résultats.
+    
+    **Q : Les données sont-elles sécurisées ?**  
+    R : Oui. Votre clé API reste dans votre navigateur et n'est jamais envoyée à nos serveurs.
+    
+    ---
+    
+    ## 🆘 Besoin d'aide ?
+    
+    **Problème avec Serper :**
+    - Vérifiez que votre clé est bien copiée (pas d'espaces)
+    - Vérifiez que vous n'avez pas dépassé les 100 recherches/jour
+    
+    **Problème avec Google Sheets :**
+    - Vérifiez que la Sheet est bien en "Lecteur" pour "Tous les utilisateurs"
+    - Vérifiez que le lien est complet (commence par https://docs.google.com)
+    
+    **Aucun résultat trouvé :**
+    - Essayez avec des termes différents
+    - Essayez une autre région
+    - Essayez "Sur le web" au lieu de "Uniquement dans mes institutions"
+    
+    **Contactez l'équipe VDN si vous avez d'autres questions !**
+    
+    ---
+    
+    ## 📊 Statistiques de cette session
+    
+    - **Version de l'outil :** {APP_VERSION}
+    - **Institutions chargées :** {len(st.session_state.institutions)} (Google Sheets) + {len(st.session_state.temp_institutions)} (temporaires)
+    - **Clé API configurée :** {"✅ Oui" if api_key else "❌ Non"}
+    - **Google Sheet configurée :** {"✅ Oui" if st.session_state.sheet_url else "❌ Non"}
+    """.format(
+        APP_VERSION=APP_VERSION,
+        len=len,
+        st=st,
+        api_key=api_key
+    ))
 
 # Footer
 st.markdown("---")
